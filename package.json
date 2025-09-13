@@ -1,0 +1,12 @@
+{
+  "name": "auto-grass",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node scripts/daily-commit.js",
+    "test": "vitest run --reporter=verbose"
+  },
+  "devDependencies": {
+    "vitest": "^2.0.0"
+  }
+}
