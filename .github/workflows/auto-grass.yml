@@ -1,0 +1,37 @@
+name: Auto Grass
+
+on:
+  schedule:
+    # GitHub Actions は UTC で解釈。JST 9:00 = UTC 0:00
+    - cron: "0 0 * * *"
+  workflow_dispatch: {}  # 手動実行ボタン
+
+permissions:
+  contents: write
+
+jobs:
+  grow:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - run: npm install
+
+      - name: Run daily script
+        run: npm start
+
+      - name: Commit & Push if changed
+        run: |
+          if [[ -n "$(git status --porcelain)" ]]; then
+            git config user.name "auto-grass-bot"
+            git config user.email "actions@users.noreply.github.com"
+            git add -A
+            git commit -m "chore(grass): update daily_log [skip ci]"
+            git push
+          else
+            echo "No changes to commit."
+          fi
