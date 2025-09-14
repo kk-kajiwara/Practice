@@ -12,29 +12,47 @@ jobs:
   grow:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
         with:
-          fetch-depth: 0  # ← 履歴を全部取る（pull/rebase可）
+          fetch-depth: 0  # ← pull/rebaseできるように履歴を全部取得
 
-      - uses: actions/setup-node@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
         with:
           node-version: "20"
 
-      - run: npm install
+      - name: Install deps
+        run: npm install
 
       - name: Run daily script
         run: npm start
 
       - name: Commit & Push if changed
         run: |
+          # 変更があるか？
           if [[ -n "$(git status --porcelain)" ]]; then
             git config user.name "auto-grass-bot"
             git config user.email "actions@users.noreply.github.com"
+
+            # リモート履歴を取得
             git fetch origin main
-            git pull --rebase origin main      # ← 先に進んでいるリモートを取り込む
-            git add daily_log.md               # ← 変更ファイルだけをコミット
+
+            # daily_log.md だけをステージ（package-lock.json等は除外）
+            git add daily_log.md
+
+            # ステージしてない残り（package-lock.json等）は一時退避
+            git stash push --keep-index -m "auto-grass tmp" || true
+
+            # リモートの先行分を取り込む
+            git pull --rebase origin main
+
+            # コミット＆プッシュ
             git commit -m "chore(grass): update daily_log [skip ci]" || echo "No changes"
             git push
+
+            # 使い終わった stash を掃除（残っていてもOK）
+            git stash drop || true
           else
             echo "No changes to commit."
           fi
