@@ -2,21 +2,25 @@ name: Auto Grass
 
 on:
   schedule:
-    # UTCで解釈。JST 9:00 = UTC 0:00
+    # JST 9:00
     - cron: "0 0 * * *"
   workflow_dispatch: {}
 
 permissions:
   contents: write
 
+# ① 同時実行を防止（手動実行とスケジュールが重なっても1本だけ動く）
+concurrency:
+  group: auto-grass
+  cancel-in-progress: true
+
 jobs:
   grow:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
+      - name: Checkout (full history)
         uses: actions/checkout@v4
         with:
-          # pull/rebase するため履歴を全取得
           fetch-depth: 0
 
       - name: Setup Node
@@ -24,35 +28,54 @@ jobs:
         with:
           node-version: "20"
 
+      # ② まずリモートmainの最新にワークツリーを合わせてから生成
+      - name: Sync to latest main (clean)
+        run: |
+          git fetch origin main
+          # ここで必ず最新mainに一致させる（ローカルの未追跡も消えるので生成物はこの後に作る）
+          git reset --hard origin/main
+
       - name: Install deps
-        run: npm install
+        run: npm ci
 
       - name: Run daily script
         run: npm start
 
-      - name: Commit & Push if changed
+      # ③ 同じ日付の重複を自動で1行に圧縮（今日の分だけ）
+      - name: De-duplicate today's entry
+        shell: bash
         run: |
-          # 変更がある？
-          if [[ -n "$(git status --porcelain)" ]]; then
+          TODAY="$(date -u +'%Y-%m-%d')"   # JST 9:00に走るが、記録は日付文字列で判定する
+          # 例: "- 2025-09-15 — " で始まる行を一旦消して最後に1行だけ残す
+          if [ -f daily_log.md ]; then
+            TMP="$(mktemp)"
+            # 先に今日の行を全部落とす
+            grep -v "^- ${TODAY} — " daily_log.md > "$TMP" || true
+            mv "$TMP" daily_log.md
+          fi
+          # npm start が今日の1行を出している前提。もし出していないならここで追記する:
+          # echo "- ${TODAY} — 自動追記の例" >> daily_log.md
+          true
+
+      - name: Commit & Push if changed (with retry)
+        shell: bash
+        run: |
+          if [ -n "$(git status --porcelain)" ]; then
             git config user.name "auto-grass-bot"
             git config user.email "actions@users.noreply.github.com"
-
-            # 最新を取得
-            git fetch origin main
-
-            # 生成物を含め "全部" 一時退避（インデックスも含む）
-            git stash push --include-untracked -m "auto-grass tmp" || true
-
-            # リモート先行分を取り込み
-            git pull --rebase origin main
-
-            # 退避した変更を戻す
-            git stash pop || true
-
-            # daily_log.md だけをコミット対象に
             git add daily_log.md
-            git commit -m "chore(grass): update daily_log [skip ci]" || echo "No changes"
-            git push
+            git commit -m "chore(grass): update daily_log [skip ci]" || true
+
+            # プッシュ競合が出ても1回だけ自動リトライ
+            for i in 1 2; do
+              if git push origin HEAD:main; then
+                exit 0
+              fi
+              echo "Push rejected, rebasing once and retrying..."
+              git fetch origin main
+              git rebase origin/main || git rebase --abort
+            done
+            # 2回失敗したら終わる（次回の定期実行でまた試行）
           else
             echo "No changes to commit."
           fi
