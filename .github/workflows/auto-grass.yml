@@ -9,7 +9,6 @@ on:
 permissions:
   contents: write
 
-# 手動実行とスケジュールが被っても1本だけ動かす
 concurrency:
   group: auto-grass
   cancel-in-progress: true
@@ -17,7 +16,6 @@ concurrency:
 jobs:
   grow:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout (full history)
         uses: actions/checkout@v4
@@ -38,42 +36,15 @@ jobs:
       - name: Install deps
         run: npm ci
 
-      # ← ここだけで「重複除去→1行追記」まで完了します
-      - name: Update today's entry (JST, idempotent)
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          TODAY="$(TZ=Asia/Tokyo date +'%Y-%m-%d')"
-
-          # 見出しがなければ初期化
-          if [ ! -f daily_log.md ]; then
-            printf "# GitHub草ジェネレーター 🌱\n\n" > daily_log.md
-          fi
-
-          # 今日の行を全削除（全角ダッシュ「—」と半角「-」の両方に対応）
-          TMP="$(mktemp)"
-          grep -Ev "^- ${TODAY} [—-] " daily_log.md > "$TMP" || true
-          mv "$TMP" daily_log.md
-
-          # 生成：npm run -s start で余計なnpmログを抑制、最後の1行を採用
-          GEN="$(npm run -s start | tr -d '\r' | tail -n 1 || true)"
-          if [ -z "${GEN}" ]; then
-            GEN="自動記録（内容未指定）"
-          fi
-
-          # 1行だけ追記
-          echo "- ${TODAY} — ${GEN}" >> daily_log.md
-
-          echo "---- tail daily_log.md (after update) ----"
-          tail -n 10 daily_log.md || true
+      - name: Run daily script (JS handles de-dup & append)
+        run: npm start
 
       - name: Commit & Push if changed (with retry)
         shell: bash
         run: |
           set -euo pipefail
 
-          # daily_log.md に差分があるか確認
+          # daily_log.md に差分があるか
           if git diff --quiet -- daily_log.md; then
             echo "No changes to commit."
             exit 0
@@ -84,7 +55,6 @@ jobs:
           git add daily_log.md
           git commit -m "chore(grass): update daily_log [skip ci]" || true
 
-          # プッシュ競合が出ても1回だけ自動リトライ
           for i in 1 2; do
             if git push origin HEAD:main; then
               exit 0
@@ -94,5 +64,5 @@ jobs:
             git rebase origin/main || git rebase --abort
           done
 
-          # 2回失敗したら終了（次回のスケジュールで再試行）
+          # 2回失敗したら次回のスケジュールで再試行
           exit 1
