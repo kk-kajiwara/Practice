@@ -1,3 +1,4 @@
+// scripts/daily-commit.js
 import fs from "node:fs";
 import { makeLine } from "../src/line.js";
 
@@ -39,32 +40,70 @@ const quotes = [
   "初心者でも毎日少しずつ成長してる気がする。"
 ];
 
+const TZ = "Asia/Tokyo";
+const FILE = "daily_log.md";
+
+// JSTの土日判定
 function isWeekendJST(date = new Date()) {
-  const y = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Tokyo", year: "numeric" }).format(date);
-  const m = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Tokyo", month: "2-digit" }).format(date);
-  const d = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Tokyo", day: "2-digit" }).format(date);
+  const y = new Intl.DateTimeFormat("en-CA", { timeZone: TZ, year: "numeric" }).format(date);
+  const m = new Intl.DateTimeFormat("en-CA", { timeZone: TZ, month: "2-digit" }).format(date);
+  const d = new Intl.DateTimeFormat("en-CA", { timeZone: TZ, day: "2-digit" }).format(date);
   const jst = new Date(`${y}-${m}-${d}T00:00:00+09:00`);
   const dow = jst.getDay(); // 0:日, 6:土
   return dow === 0 || dow === 6;
+}
+
+function todayJST() {
+  const y = new Intl.DateTimeFormat("en-CA", { timeZone: TZ, year: "numeric" }).format(new Date()); // 2025
+  const m = new Intl.DateTimeFormat("en-CA", { timeZone: TZ, month: "2-digit" }).format(new Date()); // 09
+  const d = new Intl.DateTimeFormat("en-CA", { timeZone: TZ, day: "2-digit" }).format(new Date());   // 16
+  return `${y}-${m}-${d}`;
 }
 
 function pickQuote() {
   return quotes[Math.floor(Math.random() * quotes.length)];
 }
 
-function appendLine() {
+function ensureHeader(md) {
+  // 既存ヘッダの日本語・英語どちらでもOK。無ければ新規で見出し追加。
+  if (/^#\s*(GitHub草ジェネレーター|Daily Grass Log)/m.test(md)) return md;
+  return `# GitHub草ジェネレーター 🌱\n\n` + md.replace(/^\s+$/, "");
+}
+
+function run() {
   if (WEEKDAY_ONLY && isWeekendJST()) {
     console.log("Weekend in JST — skipping.");
     return false;
   }
-  const line = makeLine({ quote: pickQuote() });
-  const path = "daily_log.md";
-  const exists = fs.existsSync(path);
-  const prev = exists ? fs.readFileSync(path, "utf8") : "# Daily Grass Log 🌱\n\n";
-  const next = prev.trimEnd() + "\n" + line + "\n";
-  fs.writeFileSync(path, next, "utf8");
-  console.log("Appended:", line);
-  return true;
+
+  // 既存読み込み（なければ空で）
+  let md = fs.existsSync(FILE) ? fs.readFileSync(FILE, "utf8") : "";
+
+  // ヘッダ確保
+  md = ensureHeader(md.trimEnd()) + (md.endsWith("\n") ? "" : "\n");
+
+  // 今日の重複行を削除（行頭 "- YYYY-MM-DD — " または "- YYYY-MM-DD - " を対象）
+  const TODAY = todayJST();
+  const lines = md.split("\n").filter(Boolean);
+  const filtered = lines.filter(
+    (ln) => !new RegExp(`^-\\s+${TODAY}\\s+[—-]\\s+`).test(ln)
+  );
+
+  // 1行生成（makeLine は "- YYYY-MM-DD — ...." を返す想定）
+  const line = makeLine({ date: TODAY, quote: pickQuote(), tz: TZ });
+
+  // 末尾に1行を追加
+  const next = filtered.join("\n") + "\n" + line + "\n";
+
+  // 変更があるときのみ書き込み
+  if (next !== md + (md.endsWith("\n") ? "" : "\n")) {
+    fs.writeFileSync(FILE, next, "utf8");
+    console.log(`Appended: ${line}`);
+    return true;
+  } else {
+    console.log("No changes.");
+    return false;
+  }
 }
 
-appendLine();
+run();
